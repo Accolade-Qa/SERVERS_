@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Header, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy import create_engine, Column, Integer, String, DateTime
 from sqlalchemy.ext.declarative import declarative_base
@@ -7,34 +7,31 @@ from datetime import datetime
 import os
 import shutil
 import uuid
+import hashlib
 from loguru import logger
 from fastapi.templating import Jinja2Templates
 from fastapi.requests import Request
 from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
+import config
 
-# FastAPI app
 app = FastAPI()
 
-# Configuration
-UPLOAD_DIR = "uploaded_logs"
-TEMP_CHUNKS_DIR = "temp_chunks"
-LOG_FILE = "logs/server.log"
-DATABASE_URL = "sqlite:///server.db"
-templates = Jinja2Templates(directory="templates")
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Logging setup
+UPLOAD_DIR = config.UPLOAD_DIR
+TEMP_CHUNKS_DIR = config.TEMP_CHUNKS_DIR
+LOG_FILE = config.LOG_FILE
+DATABASE_URL = config.DATABASE_URL
+API_KEY = config.API_KEY
+templates = Jinja2Templates(directory=config.TEMPLATES_DIR)
+
 logger.add(LOG_FILE, rotation="1 MB", retention="10 days", level="INFO")
 
-# Ensure upload directory exists
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(TEMP_CHUNKS_DIR, exist_ok=True)
 os.makedirs("logs", exist_ok=True)
-logger.add(LOG_FILE, rotation="1 MB", retention="10 days", level="INFO")
 
-# FastAPI app
-app = FastAPI()
-
-# Database setup
 Base = declarative_base()
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(bind=engine)
@@ -49,10 +46,20 @@ class LogEntry(Base):
 
 Base.metadata.create_all(bind=engine)
 
-# Routes
-# ==== This is the basic uploder ===
+def verify_api_key(x_api_key: str = Header(None, alias="X-API-Key"), api_key: str = Form(None)):
+    key = x_api_key or api_key
+    if not key or key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API Key")
+    return key
+
 @app.post("/upload/")
-async def upload_log_file(user: str = Form(...), file: UploadFile = File(...)):
+async def upload_log_file(
+    file: UploadFile = File(...),
+    user: str = Form(...),
+    api_key: str = Form(None)
+):
+    if not api_key or api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API Key")
     if not file.filename.endswith(".log"):
         logger.warning(f"Rejected non-.log file upload attempt: {file.filename}")
         raise HTTPException(status_code=400, detail="Only .log files are allowed")
@@ -83,7 +90,6 @@ async def upload_log_file(user: str = Form(...), file: UploadFile = File(...)):
     finally:
         db.close()
 
-# === This is the chunk by chunk uploader route
 @app.post("/upload_chunk/")
 async def upload_chunk(
     chunk: UploadFile,
@@ -91,7 +97,8 @@ async def upload_chunk(
     x_chunk_index: int = Header(...),
     x_total_chunks: int = Header(...),
     x_chunk_hash: str = Header(...),
-    x_user: str = Header(...)
+    x_user: str = Header(...),
+    x_api_key: str = Header(...)
 ):
     file_subdir = os.path.join(TEMP_CHUNKS_DIR, x_file_id)
     os.makedirs(file_subdir, exist_ok=True)
@@ -128,21 +135,6 @@ async def upload_chunk(
 
     return {"status": "incomplete", "chunk_index": x_chunk_index}
 
-# @app.get("/logs/")
-# def get_all_logs():
-#     db = SessionLocal()
-#     try:
-#         entries = db.query(LogEntry).all()
-#         return [{
-#             "id": e.id,
-#             "filename": e.filename,
-#             "original_filename": e.original_filename,
-#             "user": e.user,
-#             "timestamp": e.timestamp.isoformat()
-#         } for e in entries]
-#     finally:
-#         db.close()
-
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
     db = SessionLocal()
@@ -159,13 +151,7 @@ def view_log_file(request: Request, filename: str):
         raise HTTPException(status_code=404, detail="File not found")
     with open(file_path, "r") as f:
         content = f.read()
-    return HTMLResponse(f"""
-    <html><body>
-    <h2>Viewing: {filename}</h2>
-    <pre>{content}</pre>
-    <a href="/">Back to dashboard</a>
-    </body></html>
-    """)
+    return templates.TemplateResponse("view_log.html", {"request": request, "filename": filename, "content": content})
 
 @app.get("/download/{filename}")
 def download_log_file(filename: str):
