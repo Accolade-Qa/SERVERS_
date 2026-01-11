@@ -2,6 +2,23 @@
 
 A comprehensive FastAPI-based system for centralized log file collection, management, and analysis from distributed devices.
 
+## Table of Contents
+
+- [🚀 Features](#-features)
+- [📁 Project Structure](#-project-structure)
+- [🛠 Installation](#-installation)
+- [⚙️ Configuration](#️-configuration)
+- [🎯 Usage](#-usage)
+- [🔌 API Endpoints](#-api-endpoints)
+- [🧪 Testing](#-testing)
+- [🔒 Security Features](#-security-features)
+- [📊 Database Schema](#-database-schema)
+- [🚀 Deployment](#-deployment)
+- [🐛 Troubleshooting](#-troubleshooting)
+- [🤝 Contributing](#-contributing)
+- [📄 License](#-license)
+- [📞 Support](#-support)
+
 ## 🚀 Features
 
 - **Secure File Uploads**: API key authenticated uploads with chunked transfer support
