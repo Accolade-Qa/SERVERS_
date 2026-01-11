@@ -54,18 +54,27 @@ def verify_api_key(x_api_key: str = Header(None, alias="X-API-Key"), api_key: st
 
 @app.post("/upload/")
 async def upload_log_file(
-    file: UploadFile = File(...),
+    api_key: str = Form(...),
     user: str = Form(...),
-    api_key: str = Form(None)
+    file: UploadFile = File(...)
 ):
+    logger.info(f"Upload attempt - User: {user}, File: {file.filename if file else 'None'}, API Key provided: {bool(api_key)}")
+
     if not api_key or api_key != API_KEY:
+        logger.warning(f"Invalid API key attempt from user: {user}")
         raise HTTPException(status_code=401, detail="Invalid API Key")
     if not file.filename.endswith(".log"):
         logger.warning(f"Rejected non-.log file upload attempt: {file.filename}")
         raise HTTPException(status_code=400, detail="Only .log files are allowed")
 
+    # Create folder structure: uploaded_logs/{username}/{date}/
+    current_date = datetime.utcnow().strftime("%Y-%m-%d")
+    user_dir = os.path.join(UPLOAD_DIR, user)
+    date_dir = os.path.join(user_dir, current_date)
+    os.makedirs(date_dir, exist_ok=True)
+
     unique_filename = f"{uuid.uuid4()}_{file.filename}"
-    file_path = os.path.join(UPLOAD_DIR, unique_filename)
+    file_path = os.path.join(date_dir, unique_filename)
 
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
@@ -73,7 +82,7 @@ async def upload_log_file(
     db = SessionLocal()
     try:
         entry = LogEntry(
-            filename=unique_filename,
+            filename=os.path.join(user, current_date, unique_filename),
             original_filename=file.filename,
             user=user,
             timestamp=datetime.utcnow()
@@ -81,10 +90,11 @@ async def upload_log_file(
         db.add(entry)
         db.commit()
         db.refresh(entry)
-        logger.info(f"Uploaded by {user}: {file.filename} -> {unique_filename}")
+        logger.info(f"Uploaded by {user}: {file.filename} -> {file_path}")
         return {"message": "File uploaded successfully", "metadata": {
             "filename": unique_filename,
             "user": user,
+            "date": current_date,
             "timestamp": entry.timestamp.isoformat()
         }}
     finally:
@@ -137,25 +147,54 @@ async def upload_chunk(
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
+    # Get folder structure
+    folder_structure = {}
+    if os.path.exists(UPLOAD_DIR):
+        for user_dir in os.listdir(UPLOAD_DIR):
+            user_path = os.path.join(UPLOAD_DIR, user_dir)
+            if os.path.isdir(user_path):
+                folder_structure[user_dir] = {}
+                for date_dir in os.listdir(user_path):
+                    date_path = os.path.join(user_path, date_dir)
+                    if os.path.isdir(date_path):
+                        folder_structure[user_dir][date_dir] = []
+                        for file in os.listdir(date_path):
+                            if file.endswith('.log'):
+                                folder_structure[user_dir][date_dir].append(file)
+
     db = SessionLocal()
     try:
         logs = db.query(LogEntry).order_by(LogEntry.timestamp.desc()).all()
-        return templates.TemplateResponse("dashboard.html", {"request": request, "logs": logs})
+        return templates.TemplateResponse("dashboard.html", {
+            "request": request,
+            "logs": logs,
+            "folder_structure": folder_structure
+        })
     finally:
         db.close()
 
-@app.get("/view/{filename}", response_class=HTMLResponse)
-def view_log_file(request: Request, filename: str):
-    file_path = os.path.join(UPLOAD_DIR, filename)
+@app.get("/view/{user}/{date}/{filename}")
+def view_log_file(user: str, date: str, filename: str):
+    file_path = os.path.join(UPLOAD_DIR, user, date, filename)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
+
+    file_stats = os.stat(file_path)
     with open(file_path, "r") as f:
         content = f.read()
-    return templates.TemplateResponse("view_log.html", {"request": request, "filename": filename, "content": content})
 
-@app.get("/download/{filename}")
-def download_log_file(filename: str):
-    file_path = os.path.join(UPLOAD_DIR, filename)
+    return {
+        "filename": filename,
+        "user": user,
+        "date": date,
+        "content": content,
+        "size": file_stats.st_size,
+        "modified": file_stats.st_mtime
+    }
+
+@app.get("/download/{user}/{date}/{filename}")
+def download_log_file(user: str, date: str, filename: str):
+    file_path = os.path.join(UPLOAD_DIR, user, date, filename)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(path=file_path, filename=filename, media_type='text/plain')

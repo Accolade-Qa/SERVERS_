@@ -4,6 +4,18 @@ document.addEventListener('DOMContentLoaded', function() {
         return;
     }
 
+    // Alpine.js data for folder expansion
+    Alpine.data('folderTree', () => ({
+        expandedFolders: [],
+        toggleFolder(folderId) {
+            if (this.expandedFolders.includes(folderId)) {
+                this.expandedFolders = this.expandedFolders.filter(id => id !== folderId);
+            } else {
+                this.expandedFolders.push(folderId);
+            }
+        }
+    }));
+
     const uploadForm = document.querySelector('form[action="/upload/"]');
     if (uploadForm) {
         uploadForm.addEventListener('submit', function(e) {
@@ -11,13 +23,13 @@ document.addEventListener('DOMContentLoaded', function() {
             const userInput = this.querySelector('input[name="user"]');
 
             if (!userInput.value.trim()) {
-                alert('Please enter a user name');
+                alert('Please enter a RPi board username');
                 e.preventDefault();
                 return;
             }
 
             if (!fileInput.files[0]) {
-                alert('Please select a file to upload');
+                alert('Please select a log file to upload');
                 e.preventDefault();
                 return;
             }

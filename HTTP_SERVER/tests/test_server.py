@@ -17,7 +17,7 @@ def test_upload_without_api_key():
     assert response.status_code == 422
 
 def test_upload_with_invalid_api_key():
-    response = client.post("/upload/", data={"user": "test"}, files={"file": ("test.log", b"test content")}, headers={"X-API-Key": "invalid"})
+    response = client.post("/upload/", data={"api_key": "invalid", "user": "test"}, files={"file": ("test.log", b"test content")})
     assert response.status_code == 401
 
 def test_upload_valid():
@@ -27,7 +27,7 @@ def test_upload_valid():
 
     try:
         with open(temp_file, 'rb') as f:
-            response = client.post("/upload/", data={"user": "test"}, files={"file": (os.path.basename(temp_file), f, 'text/plain')}, headers={"X-API-Key": config.API_KEY})
+            response = client.post("/upload/", data={"api_key": config.API_KEY, "user": "test"}, files={"file": (os.path.basename(temp_file), f, 'text/plain')})
         assert response.status_code == 200
         assert "uploaded successfully" in response.json()["message"]
     finally:

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" x-data="{ showUploadForm: false }">
+<html lang="en">
 
 <head>
   <meta charset="UTF-8">
@@ -10,68 +10,83 @@
 </head>
 
 <body class="bg-gray-100 text-gray-800 p-6">
-  <div class="max-w-5xl mx-auto">
-    <h1 class="text-3xl font-bold mb-6">📜 Log File Dashboard</h1>
+  <div class="max-w-6xl mx-auto"
+    x-data="{ expandedFolders: [], toggleFolder(folderId) { if (this.expandedFolders.includes(folderId)) { this.expandedFolders = this.expandedFolders.filter(id => id !== folderId); } else { this.expandedFolders.push(folderId); } } }">
+    <h1 class="text-3xl font-bold mb-6">📁 Log File Management System</h1>
 
-    <!-- Upload Form Toggle -->
-    <button @click="showUploadForm = !showUploadForm"
-      class="mb-4 bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
-      <template x-if="!showUploadForm">
-        <span>📤 Upload New Log</span>
-      </template>
-      <template x-if="showUploadForm">
-        <span>✖ Close Upload</span>
-      </template>
-    </button>
+    <!-- System Stats -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+      <div class="bg-blue-100 p-4 rounded-lg">
+        <h3 class="font-semibold text-blue-800">Total Users</h3>
+        <p class="text-2xl font-bold text-blue-600">{{ folder_structure|length }}</p>
+      </div>
+      <div class="bg-green-100 p-4 rounded-lg">
+        <h3 class="font-semibold text-green-800">Total Files</h3>
+        <p class="text-2xl font-bold text-green-600">{{ logs|length }}</p>
+      </div>
+      <div class="bg-purple-100 p-4 rounded-lg">
+        <h3 class="font-semibold text-purple-800">Storage Used</h3>
+        <p class="text-lg font-bold text-purple-600">~{{ (logs|length * 0.1)|round(1) }} MB</p>
+      </div>
+    </div>
 
-    <!-- Upload Form -->
-    <form x-show="showUploadForm" x-transition method="post" action="/upload/" enctype="multipart/form-data"
-      class="bg-white p-6 rounded shadow mb-6">
-      <div class="mb-4">
-        <label class="block font-semibold mb-2">API Key</label>
-        <input type="password" name="api_key" required class="w-full border rounded px-3 py-2"
-          value="L2yMnCq8mPBVL076z2YPBQ1MuItdQrrfyRHGaRwyQN8">
+    <!-- Folder Structure -->
+    <div class="bg-white rounded shadow">
+      <div class="p-6 border-b">
+        <h2 class="text-xl font-semibold">📂 File Organization</h2>
+        <p class="text-gray-600 mt-1">Files organized by RPi board username and date</p>
       </div>
-      <div class="mb-4">
-        <label class="block font-semibold mb-2">User</label>
-        <input type="text" name="user" required class="w-full border rounded px-3 py-2">
-      </div>
-      <div class="mb-4">
-        <label class="block font-semibold mb-2">Log File (.log)</label>
-        <input type="file" name="file" accept=".log" required class="w-full">
-      </div>
-      <button type="submit" class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">
-        Upload
-      </button>
-    </form>
 
-    <!-- Log Table -->
-    <div class="overflow-auto bg-white rounded shadow">
-      <table class="min-w-full text-sm text-left table-hover">
-        <thead class="bg-gray-200 text-gray-700">
-          <tr>
-            <th class="py-3 px-4 cursor-pointer hover:bg-gray-300">User</th>
-            <th class="py-3 px-4 cursor-pointer hover:bg-gray-300">Original Filename</th>
-            <th class="py-3 px-4 cursor-pointer hover:bg-gray-300">Uploaded</th>
-            <th class="py-3 px-4">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for log in logs %}
-          <tr class="border-b hover:bg-gray-50">
-            <td class="py-2 px-4">{{ log.user }}</td>
-            <td class="py-2 px-4">{{ log.original_filename }}</td>
-            <td class="py-2 px-4">{{ log.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
-            <td class="py-2 px-4 space-x-2">
-              <a href="/view/{{ log.filename }}"
-                class="bg-blue-500 text-white px-3 py-1 rounded text-sm hover:bg-blue-600 transition-colors">View</a>
-              <a href="/download/{{ log.filename }}"
-                class="bg-green-500 text-white px-3 py-1 rounded text-sm hover:bg-green-600 transition-colors">Download</a>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+      <div class="p-6">
+        {% if folder_structure %}
+        {% for user, dates in folder_structure.items() %}
+        <div class="mb-4">
+          <div class="flex items-center cursor-pointer" @click="toggleFolder('{{ user }}')">
+            <span class="text-xl mr-2" x-show="!expandedFolders.includes('{{ user }}')">📁</span>
+            <span class="text-xl mr-2" x-show="expandedFolders.includes('{{ user }}')">📂</span>
+            <h3 class="text-lg font-semibold text-blue-600">{{ user }}</h3>
+            <span class="ml-2 text-sm text-gray-500">({{ dates|length }} dates)</span>
+          </div>
+
+          <div x-show="expandedFolders.includes('{{ user }}')" x-transition class="ml-6 mt-2">
+            {% for date, files in dates.items() %}
+            <div class="mb-2">
+              <div class="flex items-center cursor-pointer" @click="toggleFolder('{{ user }}-{{ date }}')">
+                <span class="text-lg mr-2" x-show="!expandedFolders.includes('{{ user }}-{{ date }}')">📅</span>
+                <span class="text-lg mr-2" x-show="expandedFolders.includes('{{ user }}-{{ date }}')">📆</span>
+                <span class="font-medium text-green-600">{{ date }}</span>
+                <span class="ml-2 text-sm text-gray-500">({{ files|length }} files)</span>
+              </div>
+
+              <div x-show="expandedFolders.includes('{{ user }}-{{ date }}')" x-transition class="ml-6 mt-1">
+                {% for file in files %}
+                <div class="flex items-center justify-between py-1 px-3 bg-gray-50 rounded mb-1">
+                  <div class="flex items-center">
+                    <span class="text-gray-600 mr-2">📄</span>
+                    <span class="text-sm">{{ file }}</span>
+                  </div>
+                  <div class="flex space-x-2">
+                    <a href="/view/{{ user }}/{{ date }}/{{ file }}" target="_blank"
+                      class="bg-blue-500 text-white px-3 py-1 rounded text-xs hover:bg-blue-600">View JSON</a>
+                    <a href="/download/{{ user }}/{{ date }}/{{ file }}"
+                      class="bg-green-500 text-white px-3 py-1 rounded text-xs hover:bg-green-600">Download</a>
+                  </div>
+                </div>
+                {% endfor %}
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="text-center py-12 text-gray-500">
+          <span class="text-4xl mb-4 block">📂</span>
+          <p>No log files uploaded yet.</p>
+          <p class="text-sm mt-2">Use the API endpoint to upload log files.</p>
+        </div>
+        {% endif %}
+      </div>
     </div>
   </div>
   <script src="/static/js/index.js"></script>
