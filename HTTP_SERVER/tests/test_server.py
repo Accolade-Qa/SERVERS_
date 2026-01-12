@@ -21,13 +21,15 @@ def test_upload_with_invalid_api_key():
     assert response.status_code == 401
 
 def test_upload_valid():
+    # Use a filename that matches the required format
+    test_filename = "serial_log_864337059682410_Raspberrypi62_20250710_110050.log"
     with tempfile.NamedTemporaryFile(mode='w', suffix='.log', delete=False) as f:
         f.write("test log content")
         temp_file = f.name
 
     try:
         with open(temp_file, 'rb') as f:
-            response = client.post("/upload/", data={"api_key": config.API_KEY, "user": "test"}, files={"file": (os.path.basename(temp_file), f, 'text/plain')})
+            response = client.post("/upload/", data={"api_key": config.API_KEY, "user": "test"}, files={"file": (test_filename, f, 'text/plain')})
         assert response.status_code == 200
         assert "uploaded successfully" in response.json()["message"]
     finally:

@@ -63,9 +63,11 @@ async def upload_log_file(
     if not api_key or api_key != API_KEY:
         logger.warning(f"Invalid API key attempt from user: {user}")
         raise HTTPException(status_code=401, detail="Invalid API Key")
-    if not file.filename.endswith(".log"):
-        logger.warning(f"Rejected non-.log file upload attempt: {file.filename}")
-        raise HTTPException(status_code=400, detail="Only .log files are allowed")
+    
+    # Validate filename format: must start with "serial_log_" and end with ".log"
+    if not file.filename or not (file.filename.startswith("serial_log_") and file.filename.endswith(".log")):
+        logger.warning(f"Rejected invalid filename format: {file.filename}")
+        raise HTTPException(status_code=400, detail="Filename must be in format: serial_log_[serial]_[device]_[date]_[time].log")
 
     # Create folder structure: uploaded_logs/{username}/{date}/
     current_date = datetime.utcnow().strftime("%Y-%m-%d")
@@ -73,8 +75,13 @@ async def upload_log_file(
     date_dir = os.path.join(user_dir, current_date)
     os.makedirs(date_dir, exist_ok=True)
 
-    unique_filename = f"{uuid.uuid4()}_{file.filename}"
-    file_path = os.path.join(date_dir, unique_filename)
+    # Use original filename directly (already validated)
+    file_path = os.path.join(date_dir, file.filename)
+
+    # Check if file already exists
+    if os.path.exists(file_path):
+        logger.warning(f"File already exists: {file_path}")
+        raise HTTPException(status_code=409, detail="File with this name already exists")
 
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
@@ -82,7 +89,7 @@ async def upload_log_file(
     db = SessionLocal()
     try:
         entry = LogEntry(
-            filename=os.path.join(user, current_date, unique_filename),
+            filename=os.path.join(user, current_date, file.filename),
             original_filename=file.filename,
             user=user,
             timestamp=datetime.utcnow()
@@ -92,7 +99,7 @@ async def upload_log_file(
         db.refresh(entry)
         logger.info(f"Uploaded by {user}: {file.filename} -> {file_path}")
         return {"message": "File uploaded successfully", "metadata": {
-            "filename": unique_filename,
+            "filename": file.filename,
             "user": user,
             "date": current_date,
             "timestamp": entry.timestamp.isoformat()
@@ -110,6 +117,10 @@ async def upload_chunk(
     x_user: str = Header(...),
     x_api_key: str = Header(...)
 ):
+    # Validate filename format for chunked uploads
+    if not x_file_id or not (x_file_id.startswith("serial_log_") and x_file_id.endswith(".log")):
+        raise HTTPException(status_code=400, detail="Filename must be in format: serial_log_[serial]_[device]_[date]_[time].log")
+
     file_subdir = os.path.join(TEMP_CHUNKS_DIR, x_file_id)
     os.makedirs(file_subdir, exist_ok=True)
     chunk_path = os.path.join(file_subdir, f"{x_chunk_index}.part")
@@ -123,7 +134,19 @@ async def upload_chunk(
 
     parts = sorted(os.listdir(file_subdir), key=lambda x: int(x.split(".")[0]))
     if len(parts) == x_total_chunks:
-        final_path = os.path.join(UPLOAD_DIR, x_file_id)
+        # Create folder structure for final file
+        current_date = datetime.utcnow().strftime("%Y-%m-%d")
+        user_dir = os.path.join(UPLOAD_DIR, x_user)
+        date_dir = os.path.join(user_dir, current_date)
+        os.makedirs(date_dir, exist_ok=True)
+        
+        final_path = os.path.join(date_dir, x_file_id)
+        
+        # Check if file already exists
+        if os.path.exists(final_path):
+            shutil.rmtree(file_subdir)
+            raise HTTPException(status_code=409, detail="File with this name already exists")
+        
         with open(final_path, "wb") as final:
             for part in parts:
                 with open(os.path.join(file_subdir, part), "rb") as p:
@@ -132,8 +155,8 @@ async def upload_chunk(
         db = SessionLocal()
         try:
             entry = LogEntry(
-                filename=x_file_id,
-                original_filename=x_file_id.split("_", 1)[-1],
+                filename=os.path.join(x_user, current_date, x_file_id),
+                original_filename=x_file_id,
                 user=x_user,
                 timestamp=datetime.utcnow()
             )

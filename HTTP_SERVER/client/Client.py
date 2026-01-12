@@ -1,10 +1,14 @@
 import os
+import sys
 import time
 import json
 import requests
 import hashlib
 from datetime import datetime, timedelta
 from pathlib import Path
+
+# Add parent directory to path so we can import config
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 
 UPLOAD_DIR = config.CLIENT_UPLOAD_DIR
@@ -19,7 +23,19 @@ def sha256(data):
     return hashlib.sha256(data).hexdigest()
 
 def load_upload_log():
-    return json.load(open(UPLOAD_LOG)) if os.path.exists(UPLOAD_LOG) else {}
+    if os.path.exists(UPLOAD_LOG):
+        try:
+            with open(UPLOAD_LOG, 'r') as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            print(f"Warning: Corrupted upload log file {UPLOAD_LOG}, starting fresh")
+            # Backup the corrupted file
+            backup_file = UPLOAD_LOG + ".backup"
+            if os.path.exists(backup_file):
+                os.remove(backup_file)
+            os.rename(UPLOAD_LOG, backup_file)
+            return {}
+    return {}
 
 def save_upload_log(log_data):
     with open(UPLOAD_LOG, "w") as f:
@@ -61,7 +77,8 @@ def upload_file_chunked(file_path, upload_log):
     if is_file_being_written(file_path):
         return "File is still open (write-locked)"
 
-    file_id = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{file_path.name}"
+    # Use the original filename as file_id (it should already be validated)
+    file_id = file_path.name
     file_size = os.path.getsize(file_path)
     total_chunks = (file_size + CHUNK_SIZE - 1) // CHUNK_SIZE
 
