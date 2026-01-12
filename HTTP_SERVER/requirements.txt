@@ -7,3 +7,4 @@ python-multipart==0.0.21
 pytest==9.0.2
 httpx==0.28.1
 requests==2.32.3
+python-dotenv==1.0.1

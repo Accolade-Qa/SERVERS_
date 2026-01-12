@@ -1,5 +1,5 @@
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Header, Depends
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from sqlalchemy import create_engine, Column, Integer, String, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -8,16 +8,15 @@ import os
 import shutil
 import uuid
 import hashlib
+import zipfile
+import tempfile
 from loguru import logger
-from fastapi.templating import Jinja2Templates
-from fastapi.requests import Request
-from fastapi.responses import FileResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
-import config
+from . import config
 
 app = FastAPI()
 
-app.mount("/static", StaticFiles(directory=config.STATIC_DIR), name="static")
+# Backend is now a pure API server.
+# React frontend is served separately (via Vite in dev, or build artifacts in prod).
 
 
 UPLOAD_DIR = config.UPLOAD_DIR
@@ -25,7 +24,6 @@ TEMP_CHUNKS_DIR = config.TEMP_CHUNKS_DIR
 LOG_FILE = config.LOG_FILE
 DATABASE_URL = config.DATABASE_URL
 API_KEY = config.API_KEY
-templates = Jinja2Templates(directory=config.TEMPLATES_DIR)
 
 logger.add(LOG_FILE, rotation="1 MB", retention="10 days", level="INFO")
 
@@ -169,48 +167,41 @@ async def upload_chunk(
 
     return {"status": "incomplete", "chunk_index": x_chunk_index}
 
-@app.get("/", response_class=HTMLResponse)
-def dashboard(request: Request):
+@app.get("/")
+def api_root():
+    return {
+        "name": "Log Management API",
+        "version": "1.0.0",
+        "status": "online",
+        "endpoints": {
+            "logs": "/api/logs",
+            "view": "/view/{id}",
+            "delete": "/delete/{id}",
+            "download": "/download/{id}"
+        }
+    }
+
+@app.get("/api/logs")
+def get_logs():
     db = SessionLocal()
     try:
-        # Get all log entries from database
         logs = db.query(LogEntry).order_by(LogEntry.timestamp.desc()).all()
-        
-        # Build folder structure from DB entries instead of disk for consistency
-        folder_structure = {}
-        for log in logs:
-            user = log.user or "Unknown User"
-            
-            # Normalize and split filename
-            clean_filename = log.filename.replace('\\', '/').strip('/')
-            parts = clean_filename.split('/')
-            
-            # Extract date if possible (assumes user/date/file)
-            # If structure is different, we fallback to log.timestamp date
-            if len(parts) >= 2:
-                # If parts[0] is equal to user, then parts[1] is likely the date
-                # otherwise use timestamp as date fallback
-                date = parts[1] if len(parts) >= 3 else log.timestamp.strftime("%Y-%m-%d")
-            else:
-                date = log.timestamp.strftime("%Y-%m-%d") if log.timestamp else "Unknown Date"
-
-            if user not in folder_structure:
-                folder_structure[user] = {}
-            if date not in folder_structure[user]:
-                folder_structure[user][date] = []
-            
-            folder_structure[user][date].append(log)
-
-        return templates.TemplateResponse("dashboard.html", {
-            "request": request,
-            "logs": logs,
-            "folder_structure": folder_structure
-        })
+        return [
+            {
+                "id": log.id,
+                "user": log.user,
+                "filename": log.filename,
+                "original_filename": log.original_filename,
+                "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+                "size": os.path.getsize(os.path.join(UPLOAD_DIR, log.filename)) if os.path.exists(os.path.join(UPLOAD_DIR, log.filename)) else 0
+            }
+            for log in logs
+        ]
     finally:
         db.close()
 
 @app.get("/view/{log_id}")
-def view_log_file(log_id: int):
+def view_log_file(log_id: int, offset: int = 0, limit: int = 102400): # Default limit 100KB
     db = SessionLocal()
     try:
         log = db.query(LogEntry).filter(LogEntry.id == log_id).first()
@@ -221,17 +212,39 @@ def view_log_file(log_id: int):
         if not os.path.exists(file_path):
             raise HTTPException(status_code=404, detail="File not found on disk")
 
-        file_stats = os.stat(file_path)
-        with open(file_path, "r") as f:
-            content = f.read()
+        file_size = os.path.getsize(file_path)
+        
+        if offset >= file_size:
+            return {
+                "id": log.id,
+                "filename": log.original_filename,
+                "content": "",
+                "next_offset": None,
+                "total_size": file_size
+            }
+
+        # Read specific chunk
+        content = ""
+        actual_limit = min(limit, file_size - offset)
+        
+        # We use binary mode and decode with errors='replace' for robustness on chunks
+        # because a chunk might cut through a multi-byte character
+        with open(file_path, "rb") as f:
+            f.seek(offset)
+            chunk = f.read(actual_limit)
+            content = chunk.decode('utf-8', errors='replace')
+
+        next_offset = offset + actual_limit
+        if next_offset >= file_size:
+            next_offset = None
 
         return {
             "id": log.id,
             "filename": log.original_filename,
             "user": log.user,
             "content": content,
-            "size": file_stats.st_size,
-            "modified": file_stats.st_mtime
+            "next_offset": next_offset,
+            "total_size": file_size
         }
     finally:
         db.close()
@@ -247,7 +260,17 @@ def download_log_file(log_id: int):
         file_path = os.path.join(UPLOAD_DIR, log.filename)
         if not os.path.exists(file_path):
             raise HTTPException(status_code=404, detail="File not found")
-        return FileResponse(path=file_path, filename=log.original_filename, media_type='text/plain')
+            
+        # Ensure filename is safe for headers
+        from urllib.parse import quote
+        encoded_filename = quote(log.original_filename)
+        
+        return FileResponse(
+            path=file_path, 
+            filename=log.original_filename, 
+            media_type='text/plain',
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"}
+        )
     finally:
         db.close()
 
@@ -279,5 +302,78 @@ async def delete_log_file(log_id: int):
     except Exception as e:
         logger.error(f"Error deleting log: {e}")
         raise HTTPException(status_code=500, detail="Error deleting log")
+    finally:
+        db.close()
+@app.get("/download_folder/")
+def download_folder(user: str = None, date: str = None):
+    db = SessionLocal()
+    try:
+        query = db.query(LogEntry)
+        if user:
+            query = query.filter(LogEntry.user == user)
+        
+        logs = query.all()
+        
+        target_logs = []
+        if date:
+            for log in logs:
+                log_date = log.timestamp.strftime("%Y-%m-%d") if log.timestamp else "Unknown"
+                if log_date == date:
+                    target_logs.append(log)
+        else:
+            target_logs = logs
+
+        if not target_logs:
+            raise HTTPException(status_code=404, detail="No logs found for this folder")
+
+        # Create a temporary zip file
+        fd, temp_path = tempfile.mkstemp(suffix='.zip')
+        os.close(fd)
+        
+        with zipfile.ZipFile(temp_path, 'w') as zipf:
+            for log in target_logs:
+                file_path = os.path.join(UPLOAD_DIR, log.filename)
+                if os.path.exists(file_path):
+                    zipf.write(file_path, arcname=log.original_filename)
+
+        return FileResponse(
+            path=temp_path,
+            filename=f"{user or 'all'}_{date or 'logs'}.zip",
+            media_type='application/zip'
+        )
+    finally:
+        db.close()
+
+@app.delete("/delete_folder/")
+def delete_folder(user: str = None, date: str = None):
+    db = SessionLocal()
+    try:
+        query = db.query(LogEntry)
+        if user:
+            query = query.filter(LogEntry.user == user)
+        
+        logs = query.all()
+        target_logs = []
+        if date:
+            for log in logs:
+                log_date = log.timestamp.strftime("%Y-%m-%d") if log.timestamp else "Unknown"
+                if log_date == date:
+                    target_logs.append(log)
+        else:
+            target_logs = logs
+
+        deleted_count = 0
+        for log in target_logs:
+            file_path = os.path.join(UPLOAD_DIR, log.filename)
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except:
+                    pass
+            db.delete(log)
+            deleted_count += 1
+        
+        db.commit()
+        return {"message": f"Successfully deleted {deleted_count} logs"}
     finally:
         db.close()

@@ -2,6 +2,10 @@
 
 import os
 import platform
+from dotenv import load_dotenv
+
+# Load .env file from project root (move up from backend folder)
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 # Detect operating system
 IS_WINDOWS = platform.system() == "Windows"
@@ -11,12 +15,11 @@ IS_LINUX = platform.system() == "Linux"
 HOME_DIR = os.path.expanduser("~")
 
 # Server Configuration (these work on both platforms)
-UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploaded_logs")
-TEMP_CHUNKS_DIR = os.getenv("TEMP_CHUNKS_DIR", "temp_chunks")
-LOG_FILE = os.getenv("LOG_FILE", "logs/server.log")
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///server.db")
-TEMPLATES_DIR = os.getenv("TEMPLATES_DIR", "ui")
-STATIC_DIR = os.getenv("STATIC_DIR", "ui")
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", os.path.join(PROJECT_ROOT, "uploaded_logs"))
+TEMP_CHUNKS_DIR = os.getenv("TEMP_CHUNKS_DIR", os.path.join(PROJECT_ROOT, "temp_chunks"))
+LOG_FILE = os.getenv("LOG_FILE", os.path.join(PROJECT_ROOT, "logs/server.log"))
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{os.path.join(PROJECT_ROOT, 'server.db')}")
 API_KEY = os.getenv("API_KEY", "L2yMnCq8mPBVL076z2YPBQ1MuItdQrrfyRHGaRwyQN8")
 
 # Client Configuration - Cross-platform defaults

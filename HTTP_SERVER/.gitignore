@@ -129,6 +129,11 @@ temp_chunks/
 server.db
 *.log
 
+# Frontend specific
+frontend/node_modules/
+frontend/dist/
+node_modules/
+
 # IDE
 .vscode/
 .idea/
