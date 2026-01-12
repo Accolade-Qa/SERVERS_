@@ -15,7 +15,8 @@ UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploaded_logs")
 TEMP_CHUNKS_DIR = os.getenv("TEMP_CHUNKS_DIR", "temp_chunks")
 LOG_FILE = os.getenv("LOG_FILE", "logs/server.log")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///server.db")
-TEMPLATES_DIR = os.getenv("TEMPLATES_DIR", "templates")
+TEMPLATES_DIR = os.getenv("TEMPLATES_DIR", "ui")
+STATIC_DIR = os.getenv("STATIC_DIR", "ui")
 API_KEY = os.getenv("API_KEY", "L2yMnCq8mPBVL076z2YPBQ1MuItdQrrfyRHGaRwyQN8")
 
 # Client Configuration - Cross-platform defaults

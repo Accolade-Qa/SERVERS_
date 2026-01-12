@@ -1,4 +1,7 @@
+[x-cloak] { display: none !important; }
+
 .log-content {
+
     font-family: 'Courier New', monospace;
     font-size: 14px;
     line-height: 1.4;

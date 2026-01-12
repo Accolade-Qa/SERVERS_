@@ -17,7 +17,8 @@ import config
 
 app = FastAPI()
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", StaticFiles(directory=config.STATIC_DIR), name="static")
+
 
 UPLOAD_DIR = config.UPLOAD_DIR
 TEMP_CHUNKS_DIR = config.TEMP_CHUNKS_DIR
@@ -170,24 +171,36 @@ async def upload_chunk(
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
-    # Get folder structure
-    folder_structure = {}
-    if os.path.exists(UPLOAD_DIR):
-        for user_dir in os.listdir(UPLOAD_DIR):
-            user_path = os.path.join(UPLOAD_DIR, user_dir)
-            if os.path.isdir(user_path):
-                folder_structure[user_dir] = {}
-                for date_dir in os.listdir(user_path):
-                    date_path = os.path.join(user_path, date_dir)
-                    if os.path.isdir(date_path):
-                        folder_structure[user_dir][date_dir] = []
-                        for file in os.listdir(date_path):
-                            if file.endswith('.log'):
-                                folder_structure[user_dir][date_dir].append(file)
-
     db = SessionLocal()
     try:
+        # Get all log entries from database
         logs = db.query(LogEntry).order_by(LogEntry.timestamp.desc()).all()
+        
+        # Build folder structure from DB entries instead of disk for consistency
+        folder_structure = {}
+        for log in logs:
+            user = log.user or "Unknown User"
+            
+            # Normalize and split filename
+            clean_filename = log.filename.replace('\\', '/').strip('/')
+            parts = clean_filename.split('/')
+            
+            # Extract date if possible (assumes user/date/file)
+            # If structure is different, we fallback to log.timestamp date
+            if len(parts) >= 2:
+                # If parts[0] is equal to user, then parts[1] is likely the date
+                # otherwise use timestamp as date fallback
+                date = parts[1] if len(parts) >= 3 else log.timestamp.strftime("%Y-%m-%d")
+            else:
+                date = log.timestamp.strftime("%Y-%m-%d") if log.timestamp else "Unknown Date"
+
+            if user not in folder_structure:
+                folder_structure[user] = {}
+            if date not in folder_structure[user]:
+                folder_structure[user][date] = []
+            
+            folder_structure[user][date].append(log)
+
         return templates.TemplateResponse("dashboard.html", {
             "request": request,
             "logs": logs,
@@ -196,28 +209,75 @@ def dashboard(request: Request):
     finally:
         db.close()
 
-@app.get("/view/{user}/{date}/{filename}")
-def view_log_file(user: str, date: str, filename: str):
-    file_path = os.path.join(UPLOAD_DIR, user, date, filename)
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found")
+@app.get("/view/{log_id}")
+def view_log_file(log_id: int):
+    db = SessionLocal()
+    try:
+        log = db.query(LogEntry).filter(LogEntry.id == log_id).first()
+        if not log:
+            raise HTTPException(status_code=404, detail="Log entry not found")
+        
+        file_path = os.path.join(UPLOAD_DIR, log.filename)
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail="File not found on disk")
 
-    file_stats = os.stat(file_path)
-    with open(file_path, "r") as f:
-        content = f.read()
+        file_stats = os.stat(file_path)
+        with open(file_path, "r") as f:
+            content = f.read()
 
-    return {
-        "filename": filename,
-        "user": user,
-        "date": date,
-        "content": content,
-        "size": file_stats.st_size,
-        "modified": file_stats.st_mtime
-    }
+        return {
+            "id": log.id,
+            "filename": log.original_filename,
+            "user": log.user,
+            "content": content,
+            "size": file_stats.st_size,
+            "modified": file_stats.st_mtime
+        }
+    finally:
+        db.close()
 
-@app.get("/download/{user}/{date}/{filename}")
-def download_log_file(user: str, date: str, filename: str):
-    file_path = os.path.join(UPLOAD_DIR, user, date, filename)
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found")
-    return FileResponse(path=file_path, filename=filename, media_type='text/plain')
+@app.get("/download/{log_id}")
+def download_log_file(log_id: int):
+    db = SessionLocal()
+    try:
+        log = db.query(LogEntry).filter(LogEntry.id == log_id).first()
+        if not log:
+            raise HTTPException(status_code=404, detail="Log entry not found")
+        
+        file_path = os.path.join(UPLOAD_DIR, log.filename)
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail="File not found")
+        return FileResponse(path=file_path, filename=log.original_filename, media_type='text/plain')
+    finally:
+        db.close()
+
+@app.delete("/delete/{log_id}")
+async def delete_log_file(log_id: int):
+    db = SessionLocal()
+    try:
+        log = db.query(LogEntry).filter(LogEntry.id == log_id).first()
+        if not log:
+            raise HTTPException(status_code=404, detail="Log entry not found")
+        
+        file_path = os.path.join(UPLOAD_DIR, log.filename)
+        
+        # 1. Delete file from disk
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                logger.info(f"Deleted file from disk: {file_path}")
+            except Exception as e:
+                logger.error(f"Error deleting file {file_path}: {e}")
+                # Continue anyway to clean up DB
+        
+        # 2. Delete entry from database
+        db.delete(log)
+        db.commit()
+        logger.info(f"Deleted database entry for ID: {log_id}")
+        
+        return {"message": "Log deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting log: {e}")
+        raise HTTPException(status_code=500, detail="Error deleting log")
+    finally:
+        db.close()

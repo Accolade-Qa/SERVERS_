@@ -1,4 +1,5 @@
 document.addEventListener('DOMContentLoaded', function() {
+
     if (typeof Alpine === 'undefined') {
         console.warn('Alpine.js not loaded');
         return;
@@ -170,6 +171,7 @@ function makeRequest(url, options = {}) {
     });
 }
 
+// Export to window for click handlers
 window.LogDashboard = {
     highlightLogContent,
     makeTableSortable,
