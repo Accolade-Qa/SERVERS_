@@ -4,20 +4,30 @@ import time
 import json
 import requests
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
+from dotenv import load_dotenv
 
-# Add parent directory to path so we can import config
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import config
+# Load environment variables from .env file
+load_dotenv()
 
-UPLOAD_DIR = config.CLIENT_UPLOAD_DIR
-SERVER_URL = config.SERVER_URL
-USER = config.CLIENT_USER
-UPLOAD_LOG = config.UPLOAD_LOG_FILE
-CRON_LOG = config.CRON_LOG_FILE
-RETENTION_DAYS = config.RETENTION_DAYS
-CHUNK_SIZE = config.CHUNK_SIZE
+# Configuration (Loads from environment variables or uses defaults)
+# SERVER_URL should be the full URL to the upload_chunk endpoint
+SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8000/upload_chunk/")
+# API_KEY must match the server's API_KEY
+API_KEY = os.getenv("API_KEY", "L2yMnCq8mPBVL076z2YPBQ1MuItdQrrfyRHGaRwyQN8")
+# CLIENT_USER is used to create a subdirectory on the server
+USER = os.getenv("CLIENT_USER", os.environ.get("USERNAME", os.environ.get("USER", "unknown-user")))
+# CLIENT_UPLOAD_DIR is the root directory to scan for .log files (e.g., "log/")
+UPLOAD_DIR = os.getenv("CLIENT_UPLOAD_DIR", "log")
+
+# These are local bookkeeping files
+UPLOAD_LOG = "upload_history.json"
+CRON_LOG = "client_activity.log"
+
+# Retention and Chunking
+RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", str(512 * 1024))) # 512KB
 
 def sha256(data):
     return hashlib.sha256(data).hexdigest()
@@ -55,11 +65,11 @@ def upload_file(file_path, upload_log):
     if is_file_being_written(file_path):
         return "File is still open (write-locked)"
 
-    basic_upload_url = config.SERVER_URL.replace("upload_chunk", "upload")
+    basic_upload_url = SERVER_URL.replace("upload_chunk", "upload")
     with open(file_path, 'rb') as f:
         files = {'file': (file_path.name, f, 'text/plain')}
         data = {'user': USER}
-        headers = {"X-API-Key": config.API_KEY}
+        headers = {"X-API-Key": API_KEY}
         try:
             res = requests.post(basic_upload_url, files=files, data=data, headers=headers)
             if res.status_code == 200:
@@ -91,7 +101,7 @@ def upload_file_chunked(file_path, upload_log):
                 "X-Total-Chunks": str(total_chunks),
                 "X-User": USER,
                 "X-Chunk-Hash": sha256(chunk),
-                "X-API-Key": config.API_KEY
+                "X-API-Key": API_KEY
             }
             files = {'chunk': ("chunk", chunk)}
             try:
